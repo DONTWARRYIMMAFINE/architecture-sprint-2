@@ -1,0 +1,150 @@
+name: mongo-sharding
+
+services:
+  configSrv1:
+    image: mongo:latest
+    container_name: configSrv1
+    restart: always
+    ports:
+      - "27016:27016"
+    volumes:
+      - config-data-1:/data/db
+    command:
+      [
+        "--configsvr",
+        "--replSet",
+        "config_server",
+        "--bind_ip_all",
+        "--port",
+        "27016"
+      ]
+    healthcheck:
+      test: [ "CMD", "mongosh", "--quiet", "--port", "27016", "--eval", "db.runCommand('ping').ok" ]
+      interval: 5s
+      start_period: 10s
+
+  configSrv2:
+    image: mongo:latest
+    container_name: configSrv2
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - config-data-2:/data/db
+    command:
+      [
+        "--configsvr",
+        "--replSet",
+        "config_server",
+        "--bind_ip_all",
+        "--port",
+        "27017"
+      ]
+    healthcheck:
+      test: [ "CMD", "mongosh", "--quiet", "--port", "27017", "--eval", "db.runCommand('ping').ok" ]
+      interval: 5s
+      start_period: 10s
+
+  shard1:
+    image: mongo:latest
+    container_name: shard1
+    restart: always
+    ports:
+      - "27018:27018"
+    volumes:
+      - shard1-data:/data/db
+    command:
+      [
+        "--shardsvr",
+        "--replSet",
+        "shard1",
+        "--bind_ip_all",
+        "--port",
+        "27018"
+      ]
+    healthcheck:
+      test: [ "CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand('ping')" ]
+      interval: 5s
+      start_period: 10s
+
+  shard2:
+    image: mongo:latest
+    container_name: shard2
+    restart: always
+    ports:
+      - "27019:27019"
+    volumes:
+      - shard2-data:/data/db
+    command:
+      [
+        "--shardsvr",
+        "--replSet",
+        "shard2",
+        "--bind_ip_all",
+        "--port",
+        "27019"
+      ]
+    healthcheck:
+      test: [ "CMD", "mongosh", "--port", "27019", "--eval", "db.adminCommand('ping')" ]
+      interval: 5s
+      start_period: 10s
+
+  mongos_router1:
+    image: mongo:latest
+    container_name: mongos_router1
+    restart: always
+    ports:
+      - "27020:27020"
+    depends_on:
+      - configSrv1
+      - configSrv2
+    command:
+      [
+        "mongos",
+        "--configdb",
+        "config_server/configSrv1:27016,configSrv2:27017",
+        "--bind_ip_all",
+        "--port",
+        "27020"
+      ]
+
+  mongos_router2:
+    image: mongo:latest
+    container_name: mongos_router2
+    restart: always
+    ports:
+      - "27021:27021"
+    depends_on:
+      - configSrv1
+      - configSrv2
+    command:
+      [
+        "mongos",
+        "--configdb",
+        "config_server/configSrv1:27016,configSrv2:27017",
+        "--bind_ip_all",
+        "--port",
+        "27021"
+      ]
+
+  pymongo_api:
+    container_name: pymongo_api
+    build:
+      context: api_app
+      dockerfile: Dockerfile
+    image: kazhem/pymongo_api:1.0.0
+    depends_on:
+      - mongos_router1
+      - mongos_router2
+    ports:
+      - 8080:8080
+    environment:
+      # В теории должно быть "mongodb://mongos_router1:27020,mongos_router2:27021", но клиент ломается
+      MONGODB_URL: "mongodb://mongos_router1:27020"
+      MONGODB_DATABASE_NAME: "somedb"
+
+volumes:
+  config-data-1:
+  config-data-2:
+  shard1-data:
+  shard2-data:
